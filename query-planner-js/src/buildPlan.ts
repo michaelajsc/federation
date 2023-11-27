@@ -917,25 +917,76 @@ class FetchGroup {
 
   private readonly inputRewrites: FetchDataRewrite[] = [];
 
+  readonly dependencyGraph: FetchDependencyGraph;
+  index: number;
+  readonly subgraphName: string;
+  readonly rootKind: SchemaRootKind;
+  readonly parentType: CompositeType;
+  readonly isEntityFetch: boolean;
+  _selection: MutableSelectionSet<{ conditions: Conditions}>;
+  _inputs?: GroupInputs;
+  readonly mergeAt?: ResponsePath;
+  readonly deferRef?: string;
+  readonly subgraphAndMergeAtKey?: string;
+  cachedCost?: number;
+  isKnownUseful?: boolean;
+  unMergeable?: boolean;
+  readonly isKeyFetchGroup?: boolean;
+  isConditionsGroup: boolean;
 
-  private constructor(
-    readonly dependencyGraph: FetchDependencyGraph,
-    public index: number,
-    readonly subgraphName: string,
-    readonly rootKind: SchemaRootKind,
-    readonly parentType: CompositeType,
-    readonly isEntityFetch: boolean,
-    private _selection: MutableSelectionSet<{ conditions: Conditions}>,
-    private _inputs?: GroupInputs,
-    readonly mergeAt?: ResponsePath,
-    readonly deferRef?: string,
+  private constructor({
+    dependencyGraph,
+    index,
+    subgraphName,
+    rootKind,
+    parentType,
+    isEntityFetch,
+    selection,
+    inputs,
+    mergeAt,
+    deferRef,
     // Some of the processing on the dependency graph checks for groups to the same subgraph and same mergeAt, and we use this
     // key for that. Having it here saves us from re-computing it more than once.
-    readonly subgraphAndMergeAtKey?: string,
-    private cachedCost?: number,
+    subgraphAndMergeAtKey,
+    cachedCost,
     // Cache used to save unecessary recomputation of the `isUseless` method.
-    private isKnownUseful: boolean = false,
-  ) {
+    isKnownUseful = false,
+    unMergeable = false,
+    isKeyFetchGroup = false,
+  }: {
+    dependencyGraph: FetchDependencyGraph;
+    index: number;
+    subgraphName: string;
+    rootKind: SchemaRootKind;
+    parentType: CompositeType;
+    isEntityFetch: boolean;
+    selection: MutableSelectionSet<{ conditions: Conditions}>;
+    inputs?: GroupInputs;
+    mergeAt?: ResponsePath;
+    deferRef?: string;
+    subgraphAndMergeAtKey?: string;
+    cachedCost?: number;
+    isKnownUseful?: boolean;
+    unMergeable?: boolean;
+    isKeyFetchGroup?: boolean;
+  }) {
+    this.dependencyGraph = dependencyGraph;
+    this.index = index;
+    this.subgraphName = subgraphName;
+    this.rootKind = rootKind;
+    this.parentType = parentType;
+    this.isEntityFetch = isEntityFetch;
+    this._selection = selection;
+    this._inputs = inputs;
+    this.mergeAt = mergeAt;
+    this.deferRef = deferRef;
+    this.subgraphAndMergeAtKey = subgraphAndMergeAtKey;
+    this.cachedCost = cachedCost;
+    this.isKnownUseful = isKnownUseful;
+    this.unMergeable = unMergeable;
+    this.isKeyFetchGroup = isKeyFetchGroup;
+    this.isConditionsGroup = false;
+
     if (this._inputs) {
       this._inputs.onUpdateCallback = () => {
         // We're trying to avoid the full recomputation of `isUseless` when we're already
@@ -959,6 +1010,7 @@ class FetchGroup {
     hasInputs,
     mergeAt,
     deferRef,
+    isKeyFetchGroup,
   }: {
     dependencyGraph: FetchDependencyGraph,
     index: number,
@@ -968,41 +1020,44 @@ class FetchGroup {
     hasInputs: boolean,
     mergeAt?: ResponsePath,
     deferRef?: string,
+    isKeyFetchGroup: boolean,
   }): FetchGroup {
     // Sanity checks that the selection parent type belongs to the schema of the subgraph we're querying.
     assert(parentType.schema() === dependencyGraph.subgraphSchemas.get(subgraphName), `Expected parent type ${parentType} to belong to ${subgraphName}`);
-    return new FetchGroup(
+    return new FetchGroup({
       dependencyGraph,
       index,
       subgraphName,
       rootKind,
       parentType,
-      hasInputs,
-      MutableSelectionSet.emptyWithMemoized(parentType, conditionsMemoizer),
-      hasInputs ? new GroupInputs(dependencyGraph.supergraphSchema) : undefined,
+      isEntityFetch: hasInputs,
+      selection: MutableSelectionSet.emptyWithMemoized(parentType, conditionsMemoizer),
+      inputs: hasInputs ? new GroupInputs(dependencyGraph.supergraphSchema) : undefined,
       mergeAt,
       deferRef,
-      hasInputs ? `${toValidGraphQLName(subgraphName)}-${mergeAt?.join('::') ?? ''}` : undefined
-    );
+      subgraphAndMergeAtKey: hasInputs ? `${toValidGraphQLName(subgraphName)}-${mergeAt?.join('::') ?? ''}` : undefined,
+      isKeyFetchGroup,
+    });
   }
 
   // Clones everything on the group itself, but not it's `_parents` or `_children` links.
   cloneShallow(newDependencyGraph: FetchDependencyGraph): FetchGroup {
-    return new FetchGroup(
-      newDependencyGraph,
-      this.index,
-      this.subgraphName,
-      this.rootKind,
-      this.parentType,
-      this.isEntityFetch,
-      this._selection.clone(),
-      this._inputs?.clone(),
-      this.mergeAt,
-      this.deferRef,
-      this.subgraphAndMergeAtKey,
-      this.cachedCost,
-      this.isKnownUseful,
-    );
+    return new FetchGroup({
+      dependencyGraph: newDependencyGraph,
+      index: this.index,
+      subgraphName: this.subgraphName,
+      rootKind: this.rootKind,
+      parentType: this.parentType,
+      isEntityFetch: this.isEntityFetch,
+      selection: this._selection.clone(),
+      inputs: this._inputs?.clone(),
+      mergeAt: this.mergeAt,
+      deferRef: this.deferRef,
+      subgraphAndMergeAtKey: this.subgraphAndMergeAtKey,
+      cachedCost: this.cachedCost,
+      isKnownUseful: this.isKnownUseful,
+      isKeyFetchGroup: this.isKeyFetchGroup, //TODO: a couple of fields were missing. Was that intentional?
+    });
   }
 
   cost(): number {
@@ -2192,6 +2247,7 @@ class FetchDependencyGraph {
     rootKind, // always "query" for entity fetches
     mergeAt,
     deferRef,
+    isKeyFetchGroup = false,
   }: {
     subgraphName: string,
     parentType: CompositeType,
@@ -2199,6 +2255,7 @@ class FetchDependencyGraph {
     rootKind: SchemaRootKind,
     mergeAt?: ResponsePath,
     deferRef?: string,
+    isKeyFetchGroup?: boolean,
   }): FetchGroup {
     this.onModification();
     const newGroup = FetchGroup.create({
@@ -2210,6 +2267,7 @@ class FetchDependencyGraph {
       hasInputs,
       mergeAt,
       deferRef,
+      isKeyFetchGroup,
     });
     this.groups.push(newGroup);
     return newGroup;
@@ -2275,6 +2333,7 @@ class FetchDependencyGraph {
     mergeAt: ResponsePath,
     deferRef?: string,
   }): FetchGroup {
+
     return this.newFetchGroup({
       subgraphName,
       parentType,
@@ -2316,14 +2375,17 @@ class FetchDependencyGraph {
   }): FetchGroup {
     const parentType = this.federationMetadata(subgraphName).entityType();
     assert(parentType, () => `Subgraph ${subgraphName} has no entities defined`);
-    return this.newFetchGroup({
+
+    const fg =  this.newFetchGroup({
       subgraphName,
       parentType,
       hasInputs: true,
       rootKind: 'query',
       mergeAt,
-      deferRef
+      deferRef,
+      isKeyFetchGroup: true,
     });
+    return fg;
   }
 
   remove(toRemove: FetchGroup) {
@@ -2464,12 +2526,13 @@ class FetchDependencyGraph {
       // We iterate on all pairs of children and merge those siblings that can be merged together. Note
       // that when we merged, we effectively modify the array we're iterating over, so we use indexes
       // and re-test against `children.length` every time to ensure we don't miss elements as we do so.
+
       for (let i = 0; i < children.length; i++) {
         const gi = children[i];
         let j = i + 1;
         while (j < children.length) {
           const gj = children[j];
-          if (gi.canMergeSiblingIn(gj)) {
+          if (!gi.unMergeable && !gj.unMergeable && gi.canMergeSiblingIn(gj)) {
             // In theory, we can merge gi into gj, or gj into gi, it shouldn't matter. But we
             // merge gi into gj so our iteration can continue properly.
             gi.mergeSiblingIn(gj);
@@ -2538,11 +2601,13 @@ class FetchDependencyGraph {
       while (groups.length > 1) {
         const group = groups.pop()!;
         const bucket: FetchGroup[] = [ group ];
+
         // Bit of a hand-rolled loop here, but we're removing some elements, so this feel clearer overall
         let i = 0;
         while (i < groups.length) {
           const current = groups[i];
-          if (group.deferRef === current.deferRef && group.inputs!.equals(current.inputs!)) {
+          const unmergeableBucket = bucket[0] ? bucket[0].unMergeable : false;
+          if (!current.unMergeable && !unmergeableBucket && group.deferRef === current.deferRef && group.inputs!.equals(current.inputs!)) {
             bucket.push(current);
             groups.splice(i, 1);
             // Note that we don't change `i` since we just removed the element at that index and so the new
@@ -3785,7 +3850,13 @@ function computeRootFetchGroups(dependencyGraph: FetchDependencyGraph, pathTree:
     // The edge tail type is one of the subgraph root type, so it has to be an ObjectType.
     const rootType = edge.tail.type as ObjectType;
     const group = dependencyGraph.getOrCreateRootFetchGroup({ subgraphName, rootKind, parentType: rootType });
-    computeGroupsForTree(dependencyGraph, child, group, GroupPath.empty(), emptyDeferContext);
+    computeGroupsForTree({
+      dependencyGraph,
+      pathTree: child,
+      startGroup: group,
+      initialGroupPath: GroupPath.empty(),
+      initialDeferContext: emptyDeferContext,
+    });
   }
   return dependencyGraph;
 }
@@ -3796,7 +3867,13 @@ function computeNonRootFetchGroups(dependencyGraph: FetchDependencyGraph, pathTr
   const rootType = pathTree.vertex.type;
   assert(isCompositeType(rootType), () => `Should not have condition on non-selectable type ${rootType}`);
   const group = dependencyGraph.getOrCreateRootFetchGroup({ subgraphName, rootKind, parentType: rootType} );
-  computeGroupsForTree(dependencyGraph, pathTree, group, GroupPath.empty(), emptyDeferContext);
+  computeGroupsForTree({
+    dependencyGraph,
+    pathTree,
+    startGroup: group,
+    initialGroupPath: GroupPath.empty(),
+    initialDeferContext: emptyDeferContext
+  });
   return dependencyGraph;
 }
 
@@ -3878,14 +3955,23 @@ function updateCreatedGroups(createdGroups: FetchGroup[], ...newCreatedGroups: F
   }
 }
 
-function computeGroupsForTree(
-  dependencyGraph: FetchDependencyGraph,
-  pathTree: OpPathTree<any>,
-  startGroup: FetchGroup,
-  initialGroupPath: GroupPath,
-  initialDeferContext: DeferContext,
-  initialContext: PathContext = emptyContext,
-): FetchGroup[] {
+function computeGroupsForTree({
+    dependencyGraph,
+    pathTree,
+    startGroup,
+    initialGroupPath,
+    initialDeferContext,
+    initialContext = emptyContext,
+    level = 0,
+  }: {
+    dependencyGraph: FetchDependencyGraph,
+    pathTree: OpPathTree<any>,
+    startGroup: FetchGroup,
+    initialGroupPath: GroupPath,
+    initialDeferContext: DeferContext,
+    initialContext?: PathContext,
+    level?: number,
+  }): FetchGroup[] {
   const stack: {
     tree: OpPathTree,
     group: FetchGroup,
@@ -3899,9 +3985,16 @@ function computeGroupsForTree(
     context: initialContext,
     deferContext: initialDeferContext,
   }];
+  let iter = 0;
   const createdGroups: FetchGroup[] = [ ];
+  let seenUnion = false;
   while (stack.length > 0) {
     const { tree, group, path, context, deferContext } = stack.pop()!;
+    seenUnion ||= tree.vertex.type.kind === 'UnionType';
+    console.log('seenUnion', seenUnion);
+    console.log(" ".repeat(level*4), 'tree', level, ++iter, tree.toString().replace(/\n/g, ", "));
+    console.log('');
+    console.log(" ".repeat(level*4), 'groups', iter, createdGroups.map(g => g.toString()));
     if (tree.localSelections) {
       for (const selection of tree.localSelections) {
         group.addAtPath(path.inGroup(), selection);
@@ -3914,7 +4007,10 @@ function computeGroupsForTree(
     } else {
       // We want to preserve the order of the elements in the child, but the stack will reverse everything, so we iterate
       // in reverse order to counter-balance it.
-      for (const [edge, operation, conditions, child] of tree.childElements(true)) {
+      const childElements = Array.from(tree.childElements(true));
+      // const allChildrenHaveTypeCondition = childElements.every(([_edge, _operation, conditions]) => conditions !== null) && childElements.length > 1;
+      // console.log('allChildrenHaveTypeCondition', allChildrenHaveTypeCondition);
+      for (const [edge, operation, conditions, child] of childElements) {
         if (isPathContext(operation)) {
           const newContext = operation;
           // The only 3 cases where we can take edge not "driven" by an operation is either when we resolve a key, resolve
@@ -3924,7 +4020,18 @@ function computeGroupsForTree(
           if (edge.transition.kind === 'KeyResolution') {
             assert(conditions, () => `Key edge ${edge} should have some conditions paths`);
             // First, we need to ensure we fetch the conditions from the current group.
-            const conditionsGroups = computeGroupsForTree(dependencyGraph, conditions, group, path, deferContextForConditions(deferContext));
+            const conditionsGroups = computeGroupsForTree({
+              dependencyGraph,
+              pathTree: conditions,
+              startGroup: group,
+              initialGroupPath: path,
+              initialDeferContext: deferContextForConditions(deferContext),
+              level: level + 1,
+            });
+            conditionsGroups.forEach(g => {
+              g.isConditionsGroup = true;
+            });
+
             updateCreatedGroups(createdGroups, ...conditionsGroups);
             // Then we can "take the edge", creating a new group. That group depends
             // on the condition ones.
@@ -3950,18 +4057,33 @@ function computeGroupsForTree(
               conditionsGroups,
               deferRef: updatedDeferContext.activeDeferRef,
             });
+
             updateCreatedGroups(createdGroups, newGroup);
-            newGroup.addParents(conditionsGroups.map((conditionGroup) => {
-              // If `conditionGroup` parent is `group`, that is the same as `newGroup` current parent, then we can infer the path of `newGroup` into
-              // that condition `group` by looking at the paths of each to their common parent. But otherwise, we cannot have a proper
-              // "path in parent".
-              const conditionGroupParents = conditionGroup.parents();
-              let path: OperationPath | undefined = undefined;
-              if (conditionGroupParents.length === 1 && conditionGroupParents[0].group === group && conditionGroupParents[0].path) {
-                path = maybeSubstratPathPrefix(conditionGroupParents[0].path, pathInParent);
-              }
-              return { group: conditionGroup, path };
-            }));
+
+            // create a reusable inner function to add parents to the new group
+            const doAddParents = (g: FetchGroup) => {
+              g.addParents(conditionsGroups.map((conditionGroup) => {
+                // If `conditionGroup` parent is `group`, that is the same as `newGroup` current parent, then we can infer the path of `newGroup` into
+                // that condition `group` by looking at the paths of each to their common parent. But otherwise, we cannot have a proper
+                // "path in parent".
+                const conditionGroupParents = conditionGroup.parents();
+                let path: OperationPath | undefined = undefined;
+                if (conditionGroupParents.length === 1 && conditionGroupParents[0].group === group && conditionGroupParents[0].path) {
+                  path = maybeSubstratPathPrefix(conditionGroupParents[0].path, pathInParent);
+                }
+                return { group: conditionGroup, path };
+              }));
+            };
+
+            doAddParents(newGroup);
+            if (seenUnion) {
+              newGroup.unMergeable = true;
+
+              createdGroups.filter(g => g.unMergeable).forEach(g => {
+                doAddParents(g);
+              });
+            }
+
             // Note that inputs must be based on the supergraph schema, not any particular subgraph, since sometimes key conditions
             // are fetched from multiple subgraphs (and so no one subgraph has a type definition with all the proper fields, only
             // the supergraph does).
@@ -4093,6 +4215,7 @@ function computeGroupsForTree(
               path,
               context,
               updatedDeferContext,
+              level,
             );
             updated.group = requireResult.group;
             updated.path = requireResult.path;
@@ -4291,6 +4414,7 @@ function handleRequires(
   path: GroupPath,
   context: PathContext,
   deferContext: DeferContext,
+  level: number = 0,
 ): {
   group: FetchGroup,
   path: GroupPath,
@@ -4333,7 +4457,14 @@ function handleRequires(
     });
     newGroup.addParent(parent);
     newGroup.copyInputsOf(group);
-    const createdGroups = computeGroupsForTree(dependencyGraph, requiresConditions, newGroup, path, deferContextForConditions(deferContext));
+    const createdGroups = computeGroupsForTree({
+      dependencyGraph,
+      pathTree: requiresConditions,
+      startGroup: newGroup,
+      initialGroupPath: path,
+      initialDeferContext: deferContextForConditions(deferContext),
+      level: level + 1,
+    });
     if (createdGroups.length === 0) {
       // All conditions were local. Just merge the newly created group back in the current group (we didn't need it)
       // and continue.
@@ -4485,7 +4616,14 @@ function handleRequires(
     // just after having jumped to that subgraph). In that case, there isn't tons of optimisation we can do: we have to
     // see what satisfying the @require necessitate, and if it needs anything from another subgraph, we have to stop the
     // current subgraph fetch there, get the requirements from other subgraphs, and then resume the query of that particular subgraph.
-    const createdGroups = computeGroupsForTree(dependencyGraph, requiresConditions, group, path, deferContextForConditions(deferContext));
+    const createdGroups = computeGroupsForTree({
+      dependencyGraph,
+      pathTree: requiresConditions,
+      startGroup: group,
+      initialGroupPath: path,
+      initialDeferContext: deferContextForConditions(deferContext),
+      level: level + 1,
+    });
     // If we didn't created any group, that means the whole condition was fetched from the current group
     // and we're good.
     if (createdGroups.length == 0) {

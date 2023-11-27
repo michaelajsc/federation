@@ -3907,7 +3907,7 @@ describe('Named fragments preservation', () => {
               }
             }
           }
-          
+
           fragment FooChildSelect on Foo {
             __typename
             foo
@@ -3922,7 +3922,7 @@ describe('Named fragments preservation', () => {
               }
             }
           }
-          
+
           fragment FooSelect on Foo {
             __typename
             foo
@@ -4096,7 +4096,7 @@ describe('Named fragments preservation', () => {
                   }
                 }
               }
-              
+
               fragment OnV on V {
                 a
                 b
@@ -4170,7 +4170,7 @@ describe('Named fragments preservation', () => {
               }
             }
           }
-          
+
           fragment Selection on A {
             x
             y
@@ -4264,7 +4264,7 @@ describe('Named fragments preservation', () => {
               }
             }
           }
-          
+
           fragment OnV on V {
             v1
             v2
@@ -4372,7 +4372,7 @@ describe('Named fragments preservation', () => {
               ...OnT @include(if: $test2)
             }
           }
-          
+
           fragment OnT on T {
             a
             b
@@ -4572,7 +4572,7 @@ describe('Named fragments preservation', () => {
                 id
               }
             }
-            
+
             fragment OuterFrag on Outer {
               inner {
                 v {
@@ -4711,7 +4711,7 @@ describe('Named fragments preservation', () => {
                 id
               }
             }
-            
+
             fragment OuterFrag on Outer {
               w
               inner {
@@ -4852,7 +4852,7 @@ describe('Named fragments preservation', () => {
                 id
               }
             }
-            
+
             fragment OuterFrag on Outer {
               inner {
                 v
@@ -4991,7 +4991,7 @@ describe('Named fragments preservation', () => {
                 id
               }
             }
-            
+
             fragment OuterFrag on Outer {
               w
               inner {
@@ -6815,7 +6815,7 @@ describe('named fragments', () => {
               }
             }
           }
-          
+
           fragment Fragment4 on I {
             __typename
             id1
@@ -6888,7 +6888,7 @@ describe('named fragments', () => {
               }
             }
           }
-          
+
           fragment Fragment4 on I {
             id1
             id2
@@ -7030,7 +7030,7 @@ describe('named fragments', () => {
                 id
               }
             }
-            
+
             fragment allTFields on T {
               v0
               v1
@@ -7178,7 +7178,7 @@ describe('named fragments', () => {
                   }
                 }
               }
-              
+
               fragment allUFields on U {
                 v0
                 v1
@@ -7823,6 +7823,15 @@ test('avoid considering indirect paths from the root when a more direct one exis
 });
 
 describe('@requires references external field indirectly', () => {
+  const jestConsole = console;
+
+  beforeEach(() => {
+    global.console = require('console');
+  });
+
+  afterEach(() => {
+    global.console = jestConsole;
+  });
   it('key where @external is not at top level of selection of requires', () => {
     // Field issue where we were seeing a FetchGroup created where the fields used by the key to jump subgraphs
     // were not properly fetched. In the below test, this test will ensure that 'k2' is properly collected
@@ -7972,4 +7981,212 @@ describe('@requires references external field indirectly', () => {
     }
     `);
   });
+
+  it('avoid overfetching from union', () => {
+    const subgraph1 = {
+      name: 'A',
+      typeDefs: gql`
+        type Query {
+          card: ProductCard
+        }
+
+        type ProductCard @key(fields: "id") {
+          id: ID!
+          components: Component
+        }
+
+        type Product @key(fields: "newKey") {
+          newKey: ID!
+        }
+
+        union Component = ComponentA | ComponentB | ComponentC
+
+        type ComponentA {
+          a: String
+          product: Product
+        }
+
+        type ComponentB {
+          b: String
+          product: Product
+        }
+
+        type ComponentC {
+          c: String
+          product: Product
+        }
+      `,
+    };
+    const subgraph2 = {
+      name: 'B',
+      typeDefs: gql`
+        type Product @key(fields: "oldKey") @key(fields: "newKey") {
+          oldKey: ID!
+          newKey: ID!
+          a: String!
+        }
+      `,
+    };
+    const subgraph3 = {
+      name: 'C',
+      typeDefs: gql`
+        type Product @key(fields: "oldKey") {
+          oldKey: ID!
+          b: String!
+        }
+      `,
+    };
+
+    const subgraph4 = {
+      name: 'D',
+      typeDefs: gql`
+        type Product @key(fields: "oldKey") {
+          oldKey: ID!
+          c: String!
+        }
+      `,
+    };
+
+    const [api, queryPlanner] = composeAndCreatePlanner(
+      subgraph1,
+      subgraph2,
+      subgraph3,
+      subgraph4,
+    );
+    const operation = operationFromDocument(
+      api,
+      gql`
+        query Foo {
+          card {
+            components {
+              ... on ComponentA {
+                __typename
+                product {
+                  __typename
+                  a
+                }
+              }
+              ... on ComponentB {
+                __typename
+                product {
+                  __typename
+                  b
+                }
+              }
+              ... on ComponentC {
+                __typename
+                product {
+                  __typename
+                  c
+                }
+              }
+            }
+          }
+        }
+      `,
+    );
+    const plan = queryPlanner.buildQueryPlan(operation);
+    expect(plan).toMatchInlineSnapshot(`
+      QueryPlan {
+        Sequence {
+          Fetch(service: "A") {
+            {
+              card {
+                components {
+                  __typename
+                  ... on ComponentA {
+                    __typename
+                    product {
+                      __typename
+                      newKey
+                    }
+                  }
+                  ... on ComponentB {
+                    __typename
+                    product {
+                      __typename
+                      newKey
+                    }
+                  }
+                  ... on ComponentC {
+                    __typename
+                    product {
+                      __typename
+                      newKey
+                    }
+                  }
+                }
+              }
+            }
+          },
+          Flatten(path: "card.components.product") {
+            Fetch(service: "B") {
+              {
+                ... on Product {
+                  __typename
+                  newKey
+                }
+              } =>
+              {
+                ... on Product {
+                  __typename
+                  oldKey
+                }
+              }
+            },
+          },
+          Parallel {
+            Flatten(path: "card.components.product") {
+              Fetch(service: "C") {
+                {
+                  ... on Product {
+                    __typename
+                    oldKey
+                  }
+                } =>
+                {
+                  ... on Product {
+                    __typename
+                    b
+                  }
+                }
+              },
+            },
+            Flatten(path: "card.components.product") {
+              Fetch(service: "B") {
+                {
+                  ... on Product {
+                    __typename
+                    newKey
+                  }
+                } =>
+                {
+                  ... on Product {
+                    __typename
+                    a
+                  }
+                }
+              },
+            },
+            Flatten(path: "card.components.product") {
+              Fetch(service: "D") {
+                {
+                  ... on Product {
+                    __typename
+                    oldKey
+                  }
+                } =>
+                {
+                  ... on Product {
+                    __typename
+                    c
+                  }
+                }
+              },
+            },
+          },
+        },
+      }
+    `);
+  })
 });
