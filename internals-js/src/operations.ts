@@ -2041,30 +2041,6 @@ export class SelectionSet {
     return fragmentsDefinitions + rootKind + nameAndVariables + " " + this.toString(expandFragments, true, indent);
   }
 
-  typeConditionForSelections(): CompositeType | undefined {
-    const selections = this.selections();
-    const first = selections[0];
-    if (!first || first.kind !== 'FragmentSelection' || !first.element.typeCondition) {
-      return undefined;
-    }
-    const typeCondition = first.element.typeCondition
-    return selections.slice(1).every(s => {
-      if (s.kind === 'FragmentSelection') {
-        return typeCondition === s.element.typeCondition;
-      }
-      return false;
-    }) ? typeCondition : undefined;
-  }
-
-  allSelectionsHaveTypeCondition(): boolean {
-    return this.selections().every((s) => {
-      if (s.kind === 'FragmentSelection') {
-        return !!s.element.typeCondition;
-      }
-      return false;
-    });
-  }
-
   /**
    * The string representation of this selection set.
    *

@@ -931,7 +931,6 @@ class FetchGroup {
   cachedCost?: number;
   isKnownUseful?: boolean;
   unMergeable?: boolean;
-  readonly isKeyFetchGroup?: boolean;
   isConditionsGroup: boolean;
 
   private constructor({
@@ -952,7 +951,6 @@ class FetchGroup {
     // Cache used to save unecessary recomputation of the `isUseless` method.
     isKnownUseful = false,
     unMergeable = false,
-    isKeyFetchGroup = false,
   }: {
     dependencyGraph: FetchDependencyGraph;
     index: number;
@@ -968,7 +966,6 @@ class FetchGroup {
     cachedCost?: number;
     isKnownUseful?: boolean;
     unMergeable?: boolean;
-    isKeyFetchGroup?: boolean;
   }) {
     this.dependencyGraph = dependencyGraph;
     this.index = index;
@@ -984,7 +981,6 @@ class FetchGroup {
     this.cachedCost = cachedCost;
     this.isKnownUseful = isKnownUseful;
     this.unMergeable = unMergeable;
-    this.isKeyFetchGroup = isKeyFetchGroup;
     this.isConditionsGroup = false;
 
     if (this._inputs) {
@@ -1010,7 +1006,6 @@ class FetchGroup {
     hasInputs,
     mergeAt,
     deferRef,
-    isKeyFetchGroup,
   }: {
     dependencyGraph: FetchDependencyGraph,
     index: number,
@@ -1020,7 +1015,6 @@ class FetchGroup {
     hasInputs: boolean,
     mergeAt?: ResponsePath,
     deferRef?: string,
-    isKeyFetchGroup: boolean,
   }): FetchGroup {
     // Sanity checks that the selection parent type belongs to the schema of the subgraph we're querying.
     assert(parentType.schema() === dependencyGraph.subgraphSchemas.get(subgraphName), `Expected parent type ${parentType} to belong to ${subgraphName}`);
@@ -1036,7 +1030,6 @@ class FetchGroup {
       mergeAt,
       deferRef,
       subgraphAndMergeAtKey: hasInputs ? `${toValidGraphQLName(subgraphName)}-${mergeAt?.join('::') ?? ''}` : undefined,
-      isKeyFetchGroup,
     });
   }
 
@@ -1056,7 +1049,7 @@ class FetchGroup {
       subgraphAndMergeAtKey: this.subgraphAndMergeAtKey,
       cachedCost: this.cachedCost,
       isKnownUseful: this.isKnownUseful,
-      isKeyFetchGroup: this.isKeyFetchGroup, //TODO: a couple of fields were missing. Was that intentional?
+      //TODO: a couple of fields were missing. Was that intentional?
     });
   }
 
@@ -2247,7 +2240,6 @@ class FetchDependencyGraph {
     rootKind, // always "query" for entity fetches
     mergeAt,
     deferRef,
-    isKeyFetchGroup = false,
   }: {
     subgraphName: string,
     parentType: CompositeType,
@@ -2255,7 +2247,6 @@ class FetchDependencyGraph {
     rootKind: SchemaRootKind,
     mergeAt?: ResponsePath,
     deferRef?: string,
-    isKeyFetchGroup?: boolean,
   }): FetchGroup {
     this.onModification();
     const newGroup = FetchGroup.create({
@@ -2267,7 +2258,6 @@ class FetchDependencyGraph {
       hasInputs,
       mergeAt,
       deferRef,
-      isKeyFetchGroup,
     });
     this.groups.push(newGroup);
     return newGroup;
@@ -2376,16 +2366,14 @@ class FetchDependencyGraph {
     const parentType = this.federationMetadata(subgraphName).entityType();
     assert(parentType, () => `Subgraph ${subgraphName} has no entities defined`);
 
-    const fg =  this.newFetchGroup({
+    return this.newFetchGroup({
       subgraphName,
       parentType,
       hasInputs: true,
       rootKind: 'query',
       mergeAt,
       deferRef,
-      isKeyFetchGroup: true,
     });
-    return fg;
   }
 
   remove(toRemove: FetchGroup) {
@@ -3962,7 +3950,6 @@ function computeGroupsForTree({
     initialGroupPath,
     initialDeferContext,
     initialContext = emptyContext,
-    level = 0,
   }: {
     dependencyGraph: FetchDependencyGraph,
     pathTree: OpPathTree<any>,
@@ -3970,7 +3957,6 @@ function computeGroupsForTree({
     initialGroupPath: GroupPath,
     initialDeferContext: DeferContext,
     initialContext?: PathContext,
-    level?: number,
   }): FetchGroup[] {
   const stack: {
     tree: OpPathTree,
@@ -3985,16 +3971,15 @@ function computeGroupsForTree({
     context: initialContext,
     deferContext: initialDeferContext,
   }];
-  let iter = 0;
   const createdGroups: FetchGroup[] = [ ];
   let seenUnion = false;
   while (stack.length > 0) {
     const { tree, group, path, context, deferContext } = stack.pop()!;
     seenUnion ||= tree.vertex.type.kind === 'UnionType';
-    console.log('seenUnion', seenUnion);
-    console.log(" ".repeat(level*4), 'tree', level, ++iter, tree.toString().replace(/\n/g, ", "));
-    console.log('');
-    console.log(" ".repeat(level*4), 'groups', iter, createdGroups.map(g => g.toString()));
+    // console.log('seenUnion', seenUnion);
+    // console.log(" ".repeat(level*4), 'tree', level, ++iter, tree.toString().replace(/\n/g, ", "));
+    // console.log('');
+    // console.log(" ".repeat(level*4), 'groups', iter, createdGroups.map(g => g.toString()));
     if (tree.localSelections) {
       for (const selection of tree.localSelections) {
         group.addAtPath(path.inGroup(), selection);
@@ -4007,10 +3992,7 @@ function computeGroupsForTree({
     } else {
       // We want to preserve the order of the elements in the child, but the stack will reverse everything, so we iterate
       // in reverse order to counter-balance it.
-      const childElements = Array.from(tree.childElements(true));
-      // const allChildrenHaveTypeCondition = childElements.every(([_edge, _operation, conditions]) => conditions !== null) && childElements.length > 1;
-      // console.log('allChildrenHaveTypeCondition', allChildrenHaveTypeCondition);
-      for (const [edge, operation, conditions, child] of childElements) {
+      for (const [edge, operation, conditions, child] of tree.childElements(true)) {
         if (isPathContext(operation)) {
           const newContext = operation;
           // The only 3 cases where we can take edge not "driven" by an operation is either when we resolve a key, resolve
@@ -4026,7 +4008,6 @@ function computeGroupsForTree({
               startGroup: group,
               initialGroupPath: path,
               initialDeferContext: deferContextForConditions(deferContext),
-              level: level + 1,
             });
             conditionsGroups.forEach(g => {
               g.isConditionsGroup = true;
@@ -4057,11 +4038,10 @@ function computeGroupsForTree({
               conditionsGroups,
               deferRef: updatedDeferContext.activeDeferRef,
             });
-
             updateCreatedGroups(createdGroups, newGroup);
 
             // create a reusable inner function to add parents to the new group
-            const doAddParents = (g: FetchGroup) => {
+            const addParentsOnGroup = (g: FetchGroup) => {
               g.addParents(conditionsGroups.map((conditionGroup) => {
                 // If `conditionGroup` parent is `group`, that is the same as `newGroup` current parent, then we can infer the path of `newGroup` into
                 // that condition `group` by looking at the paths of each to their common parent. But otherwise, we cannot have a proper
@@ -4075,12 +4055,12 @@ function computeGroupsForTree({
               }));
             };
 
-            doAddParents(newGroup);
+            addParentsOnGroup(newGroup);
             if (seenUnion) {
               newGroup.unMergeable = true;
 
               createdGroups.filter(g => g.unMergeable).forEach(g => {
-                doAddParents(g);
+                addParentsOnGroup(g);
               });
             }
 
@@ -4215,7 +4195,6 @@ function computeGroupsForTree({
               path,
               context,
               updatedDeferContext,
-              level,
             );
             updated.group = requireResult.group;
             updated.path = requireResult.path;
@@ -4414,7 +4393,6 @@ function handleRequires(
   path: GroupPath,
   context: PathContext,
   deferContext: DeferContext,
-  level: number = 0,
 ): {
   group: FetchGroup,
   path: GroupPath,
@@ -4463,7 +4441,6 @@ function handleRequires(
       startGroup: newGroup,
       initialGroupPath: path,
       initialDeferContext: deferContextForConditions(deferContext),
-      level: level + 1,
     });
     if (createdGroups.length === 0) {
       // All conditions were local. Just merge the newly created group back in the current group (we didn't need it)
@@ -4622,7 +4599,6 @@ function handleRequires(
       startGroup: group,
       initialGroupPath: path,
       initialDeferContext: deferContextForConditions(deferContext),
-      level: level + 1,
     });
     // If we didn't created any group, that means the whole condition was fetched from the current group
     // and we're good.
