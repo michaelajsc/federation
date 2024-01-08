@@ -6,6 +6,7 @@ import {
   InputObjectType,
   InputFieldDefinition,
   ListType,
+  Directive,
 } from "../definitions";
 import { registerKnownFeature } from '../knownCoreFeatures';
 import { createDirectiveSpecification } from '../directiveAndTypeSpecification';
@@ -139,6 +140,20 @@ export class SourceSpecDefinition extends FeatureDefinition {
     return this.directive(schema, 'sourceField')!;
   }
 }
+
+export const validateSourceAPIDirective = (_schema: Schema, _directive: Directive<any>, _errorCollector: GraphQLError[]) => {
+  //
+};
+
+export const validateSourceTypeDirective = (_schema: Schema, _directive: Directive<any>, _errorCollector: GraphQLError[]) => {
+  //
+};
+
+export const validateSourceFieldDirective = (_schema: Schema, _directive: Directive<any>, _errorCollector: GraphQLError[]) => {
+  //
+};
+
+
 
 export const SOURCE_VERSIONS = new FeatureDefinitions<SourceSpecDefinition>(sourceIdentity)
   .add(new SourceSpecDefinition(new FeatureVersion(0, 1)));
