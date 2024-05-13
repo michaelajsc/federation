@@ -14,11 +14,9 @@ import {
 import {FeatureUrl, LinkDirectiveArgs} from "./specs/coreSpec";
 import {connectIdentity} from "./specs/connectSpec";
 import {aggregateError} from "./error";
-import {ErrorLocation, SourceDirective} from "../wasm/node";
+import {ErrorLocation, SourceDirective, validate_connect_directives} from "@apollo/federation-internals-wasm";
 import {ASTNode, ConstValueNode, SchemaExtensionNode, StringValueNode} from "graphql";
 
-const {validate_connect_directives} =
-    require('../wasm/node') as typeof import('../wasm/node');
 
 /**
  * @throws AggregateGraphQLError

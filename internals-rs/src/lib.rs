@@ -76,8 +76,13 @@ impl From<ValidationError> for GraphQLError {
                     }),
                 }),
             },
-            ValidationError::MissingSourceName | ValidationError::SourceNameType => GraphQLError {
+            ValidationError::GraphQLError(_) | ValidationError::SourceNameType => GraphQLError {
                 code: ErrorCode::InvalidGraphQL,
+                message,
+                location: None,
+            },
+            ValidationError::EmptySourceName => GraphQLError {
+                code: ErrorCode::InvalidSourceName,
                 message,
                 location: None,
             },
