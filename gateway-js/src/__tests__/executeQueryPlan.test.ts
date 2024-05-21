@@ -6391,6 +6391,198 @@ describe('executeQueryPlan', () => {
   });
 
   describe('fields with conflicting types needing aliasing', () => {
+    it('handles distinct but overlapping @key fields sets', async () => {
+      const s1 = {
+        name: 'S1',
+        typeDefs: gql`
+          type Query {
+            us: [U]
+          }
+
+          type A @key(fields: "id") {
+            id: ID!
+            g: Int
+          }
+
+          type B @key(fields: "newID id") {
+            newID: ID!
+            id: ID
+            g: String
+          }
+
+          union U = A | B
+        `,
+        resolvers: {
+          Query: {
+            us() {
+              return [
+                { __typename: 'A', id: 'keyA', g: 1 },
+                { __typename: 'B', newID: 'newKeyB', id: 'keyB', g: 'foo 1' },
+                { __typename: 'B', newID: 'newKeyB', id: null, g: 'foo 2' },
+              ];
+            },
+          },
+        },
+      };
+
+      const s2 = {
+        name: 'S2',
+        typeDefs: gql`
+          type A @key(fields: "id") {
+            id: ID!
+            g: Int @external
+            f: String @requires(fields: "g")
+          }
+
+          type B @key(fields: "newID id") {
+            newID: ID!
+            id: ID
+            g: String @external
+            f: String @requires(fields: "g")
+          }
+        `,
+        resolvers: {
+          A: {
+            __resolveReference(ref: { id: string; g: any }) {
+              return {
+                __typename: 'A',
+                id: ref.id,
+                g: ref.g,
+                f: `g is type ${typeof ref.g}`,
+              };
+            },
+          },
+          B: {
+            __resolveReference(ref: { newID: string; id: string; g: any }) {
+              return {
+                __typename: 'B',
+                newID: ref.newID,
+                id: ref.id,
+                g: `foo ${ref.g}`,
+                f: `g is type ${typeof ref.g}`,
+              };
+            }
+          },
+        },
+      };
+
+      const { serviceMap, schema, queryPlanner } = getFederatedTestingSchema([
+        s1,
+        s2,
+      ]);
+
+      const operation = parseOp(
+        `
+        query {
+          us {
+            ... on A {
+              __typename
+              id
+              g
+              f
+            }
+            ... on B {
+              __typename
+              newID
+              id
+              g
+              f
+            }
+          }
+        }
+        `,
+        schema,
+      );
+
+      const queryPlan = buildPlan(operation, queryPlanner);
+
+      expect(queryPlan).toMatchInlineSnapshot(`
+        QueryPlan {
+          Sequence {
+            Fetch(service: "S1") {
+              {
+                us {
+                  __typename
+                  ... on A {
+                    __typename
+                    id
+                    g
+                  }
+                  ... on B {
+                    __typename
+                    newID
+                    id__alias_0: id
+                    g__alias_0: g
+                  }
+                }
+              }
+            },
+            Flatten(path: "us.@") {
+              Fetch(service: "S2") {
+                {
+                  ... on A {
+                    __typename
+                    id
+                    g
+                  }
+                  ... on B {
+                    __typename
+                    newID
+                    id
+                    g
+                  }
+                } =>
+                {
+                  ... on A {
+                    f
+                  }
+                  ... on B {
+                    f
+                  }
+                }
+              },
+            },
+          },
+        }
+      `);
+
+      const response = await executePlan(
+        queryPlan,
+        operation,
+        undefined,
+        schema,
+        serviceMap,
+      );
+
+      expect(response.errors).toBeUndefined();
+      expect(response.data).toMatchInlineSnapshot(`
+        Object {
+          "us": Array [
+            Object {
+              "__typename": "A",
+              "f": "g is type number",
+              "g": 1,
+              "id": "keyA",
+            },
+            Object {
+              "__typename": "B",
+              "f": "g is type string",
+              "g": "foo 1",
+              "id": "keyB",
+              "newID": "newKeyB",
+            },
+            Object {
+              "__typename": "B",
+              "f": "g is type string",
+              "g": "foo 2",
+              "id": null,
+              "newID": "newKeyB",
+            },
+          ],
+        }
+      `);
+    });
+
     it('handles @requires of fields on union leading to conflict', async () => {
       const s1 = {
         name: 'S1',
