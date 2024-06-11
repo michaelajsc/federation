@@ -2,7 +2,7 @@
   ignore = "exit 0"
 
 [build.environment]
-  NODE_VERSION = "16"
+  NODE_VERSION = "18"
 
 [context.deploy-preview.build]
   base = "docs"

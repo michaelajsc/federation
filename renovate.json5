@@ -39,7 +39,7 @@
     // versions we support.
     {
       "matchPackageNames": ["@types/node"],
-      "allowedVersions": "14.x"
+      "allowedVersions": "18.x"
     },
     // node-fetch v3 only ships as ESM. We currently build to CommonJS and even
     // if we start publishing as ESM we're not going to go ESM-only for a while.
@@ -64,12 +64,12 @@
     {
       matchPackageNames: ["chalk"],
       allowedVersions: "4.x",
-    },
+    },/*
     {
       // v8 drops support for node < 16 so we can't take this for v0.x or main
       "matchPackageNames": ["lru-cache"],
       "allowedVersions": "7.x",
-    },
+    },*/
     // Bunch up all non-major npm dependencies into a single PR.  In the common case
     // where the upgrades apply cleanly, this causes less noise and is resolved faster
     // than starting a bunch of upgrades in parallel for what may turn out to be
@@ -91,6 +91,7 @@
       automerge: false,
       matchManagers: [ "npm" ],
     },
+/*
     // v3.x utils packages drop support for node 14
     {
       "matchBaseBranches": ["main"],
@@ -116,6 +117,6 @@
     {
       "matchPackageNames": ["cspell"],
       "allowedVersions": "6.x",
-    },
+    },*/
   ]
 }
